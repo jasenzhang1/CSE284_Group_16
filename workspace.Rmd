@@ -1,0 +1,638 @@
+---
+title: "temp"
+author: "Jasen Zhang"
+date: "5/16/2021"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lme4)
+library(nlme)
+library(caret)
+library(corpcor)
+library(Hmisc)
+```
+
+# Functions
+
+```{r}
+replace_period_with_hyphen <- function(arr){
+  gene_pat2 <- c()
+  
+  for(i in arr){
+    temp1 <- str_replace_all(i, '\\.', '-')
+    gene_pat2 <- append(gene_pat2, temp1)
+
+  }
+  gene_pat2
+}
+
+sample_to_patient <- function(arr){
+  gene_pat2 <- c()
+  
+  for(i in arr){
+    temp1 <- substr(i, 1, 12)
+    gene_pat2 <- append(gene_pat2, temp1)
+
+  }
+  gene_pat2
+}
+
+#------------------------------------
+# input: 
+#   df: n x p matrix of observations
+#   n: n
+#   names: the names of the subjects 
+#   
+# output:
+#   K: n x n correlation matrix
+#------------------------------------
+
+get_pearson_correlation_matrix <- function(df, n, names){
+  K <- matrix(rep(0,n^2), n, n)
+  
+  for(i in 1:n){
+    for(j in 1:i){
+      temp1 <- as.numeric(unname(df[i,]))
+      temp2 <- as.numeric(unname(df[j,]))
+      temp_correlation <- cor(temp1, temp2)
+      K[i,j] <- temp_correlation
+      K[j,i] <- temp_correlation
+    }
+    print(i)
+  }
+  
+  rownames(K) <- names
+  colnames(K) <- names
+  K
+}
+
+#-----------------------------------------------------------------------
+# Goal: Converts the factors of a dataframe to 1/0 columns
+# input: 
+#   df: dataframe of covariates
+#   name: vector of column names of factor variables
+#   
+# output:
+#   df: new dataframe of covariates with factors split into 1/0 columns
+#------------------------------------------------------------------------
+
+split_factor <- function(df, names){
+  for(name in names){
+    temp <- dplyr::pull(df, name)
+    lev <- unique(temp)
+    lev <- lev[1:length(lev) - 1]
+    for(i in lev){
+      i2 <- paste(name, i, sep = '.')
+      df <- df  %>% mutate(!!as.name(i2) := as.numeric(temp == i))
+    }
+    df <- df %>% select(- !!as.name(name))
+  }
+  df
+}
+#--------------------------------------------------------------
+# Goal: implementation of GLS theoretical solution
+# input:
+#   X: n x p covariate matrix
+#   K: n x n error matrix
+#   Y: n x 1 response matrix
+#   n: number of observations
+# 
+# output:
+#   a list containing the following:
+#     1: beta_hats
+#     2: standard errors of the beta_hats
+#     3: estimate of the variance multiplied by K
+#     4: y_hats
+#     5: residuals
+#     6: rmse
+#-------------------------------------------------------------------
+    
+GLS_solver <- function(X,K,Y,n){
+  beta <- pseudoinverse(t(X) %*% pseudoinverse(K) %*% X) %*% t(X) %*% pseudoinverse(K) %*% Y
+  var_mle <- as.numeric((1/n) * t(Y - X %*% beta) %*% pseudoinverse(K) %*% (Y - X %*% beta))
+  beta_var <- var_mle * pseudoinverse(t(X) %*% pseudoinverse(K) %*% X)
+  
+  beta_se <- as.matrix(sqrt(diag(beta_var)))
+  
+  y_hat <- X %*% beta
+  e <- Y - y_hat
+  rmse <- sqrt(mean(e^2))
+  
+  answer <- list(beta, beta_se, var_mle, y_hat, e, rmse)
+  answer
+}
+
+
+#--------------------------------------------------------------------
+# goal: create a vector that partitions n objects into k folds
+# input:
+#   n: how many observations
+#   num_folds: how many folds
+#   
+# output:
+#   allocation2: vector describing how many objects in each fold
+#-------------------------------------------------------------------
+
+
+create_fold_allocation <- function(n, num_folds){
+  remainder <- n %% num_folds
+  quotient <- floor(n / num_folds)
+  
+  allocation <- rep(quotient, num_folds)
+  
+  remainder_allocation <- c( rep(1, remainder), rep(0, num_folds - remainder))
+  allocation2 <- allocation + remainder_allocation  
+  
+  allocation2
+}
+
+
+#----------------
+# goal: to calculate the rmse of 10 fold cross validation
+# input: 
+#   df_train: the training set dataframe, only used for column names
+#   K: the training set covariance error matrix
+#   X: the training set covariates
+#   Y: the training set response variable
+#   
+# output:
+#   rmse: the overall root mean square error of the cross validation
+#----------------
+
+GLS_CV <- function(df_train, K, X, Y, seed){
+  doomed <- F
+  IDs <- rownames(df_train)
+  set.seed(seed)
+  random_IDs <- sample(IDs, length(IDs), replace = F)
+  
+  allocation <- create_fold_allocation(nrow(df_train), 10)
+  
+  fold_ID <- partition.vector(random_IDs, allocation)
+  
+  fit_cv <- data.frame()
+  
+  for(i in 1:10){
+    df_validation <- df_train[fold_ID[[i]],]
+    
+    remaining_IDs <- fold_ID
+    remaining_IDs[[i]] <- NULL
+    
+    remaining_IDs <- unname(unlist(remaining_IDs))
+    
+    df_train_2 <- df_train[remaining_IDs,]
+    
+    K_CV <- K[remaining_IDs, remaining_IDs]
+    
+    X_CV <- X[remaining_IDs,]
+    
+    X_validation <- X[fold_ID[[i]],]
+      
+    Y_CV <- Y[remaining_IDs,]
+    n_CV <- nrow(df_train_2)
+    
+    gls_model_CV <- try(GLS_solver(X_CV,K_CV,Y_CV,n_CV))
+    if(length(gls_model_CV[[1]]) == 1){
+      doomed <- T
+      break
+    }
+    
+    betas <- gls_model_CV[[1]]
+    
+    y_pred <- X_validation %*% betas
+    
+    
+    fit_cv <- rbind(fit_cv, y_pred)
+    
+  }
+  if(doomed){
+    rmse <- NA
+  }
+  else{
+    fit_cv2 <- unlist(fit_cv)
+    Y_reshuffled <- Y[random_IDs,]
+    
+    rmse <- sqrt(mean((Y_reshuffled - fit_cv2)^2))
+  }
+
+  rmse
+}
+
+```
+
+# Read the datasets
+
+```{r}
+genes <- read.csv('TCGA-LUSC.htseq_counts.tsv', sep = '\t')
+phenotype <- read.csv('TCGA-LUSC.GDC_phenotype.tsv', sep = '\t')
+ensembl_id <- genes$Ensembl_ID
+```
+
+# Get the sample ID's from all 2 dataframes
+
+```{r}
+genes_id <- colnames(genes)
+genes_id2 <- replace_period_with_hyphen(genes_id)
+
+phenotype_id <- phenotype$submitter_id.samples
+```
+
+
+# Figure out which samples are in all 3 dataframes
+
+```{r}
+all_id <- intersect(genes_id2, phenotype_id)
+all_patients <- sample_to_patient(all_id)
+```
+
+# Filter the datasets by common samples
+
+```{r}
+genes_index <- genes_id2 %in% all_id
+phenotype_index <- phenotype_id %in% all_id
+
+phenotype2 <- phenotype[phenotype_index,]
+genes2 <- as.data.frame(t(genes[, genes_index]))
+colnames(genes2) <- ensembl_id
+rownames(genes2) <- replace_period_with_hyphen(rownames(genes2))
+```
+
+
+# Getting annotation file
+
+```{r}
+zz <- gzfile('Homo_sapiens.GRCh38.104.gtf.gz','rt')  
+dat <- read.csv(zz, skip = 5, header = F, , sep = '\t')
+```
+
+# Parsing annotation file
+
+
+```{r}
+df <- dat[,9]
+
+results_df <- data.frame()
+
+for(i in 1:length(df)){
+  slice <- df[i]
+  
+  slice2 <- str_replace_all(slice, ';', '')
+
+  slice3 <- unlist(str_split(slice2, ' '))
+  
+  gene_id_index <- match('gene_id', slice3)
+  gene_id <- slice3[gene_id_index + 1]
+  
+  gene_biotype_index <- match('gene_biotype', slice3)
+  gene_biotype <- slice3[gene_biotype_index + 1]
+  
+  result <- c(gene_id, gene_biotype)
+  
+  if(! gene_id %in% results_df$X.ENSG00000284662.){
+    results_df <- rbind(results_df, result)
+  }
+  
+  
+}
+
+colnames(results_df) <- c('gene_id', 'annotation')
+
+write.csv(results_df,"annotations.csv")
+
+```
+
+# Getting annotation file
+
+```{r}
+annotations <- read.csv('annotations.csv') %>% select(-X)
+
+
+
+ensembl_id2 <- c()
+annotation_2 <- c()
+
+for(i in ensembl_id){
+  i2 <- substr(i, 1, 15)
+  ensembl_id2 <- append(ensembl_id2, i2)
+  
+  if(i2 %in% annotations$gene_id){
+    the_index <- which(annotations$gene_id == i2)
+    the_type <- annotations[the_index,2]
+    annotation_2 <- append(annotation_2, the_type)
+  }
+  else{
+    annotation_2 <- append(annotation_2, NA)
+  }
+}
+```
+
+
+# Filtering only protein coding genes
+
+```{r}
+pc_index <- annotation_2 == 'protein_coding'
+pc_index2 <- which(pc_index %in% c(TRUE))
+genes_pc <- genes2[, pc_index2]
+```
+
+```{r}
+genes_var <- genes_pc %>%
+  select(-(names(genes_pc[, sapply(genes_pc, function(v) var(v, na.rm=T)==0)])))
+
+```
+
+
+# Getting first n PC's of the genes
+
+```{r}
+pca1 <- prcomp(genes_var)
+
+top_100_pc <- as.data.frame(pca1$x[,1:100])
+```
+
+# Interpreting the principal components
+
+```{r}
+important_genes <- data.frame()
+
+evecs <- pca1$rotation
+
+evecs1 <- evecs[,1:11]
+
+for(i in 1:11){
+  slice <- evecs1[,i]
+  top_5 <- order(abs(slice))[1:5]
+  top_5_genes <- names(slice)[top_5]
+  important_genes <- rbind(important_genes, top_5_genes)
+}
+
+```
+
+
+
+# Getting relevant phenotype covariates
+
+```{r}
+covariates <- c('gender.demographic',
+                'race.demographic',
+                'ethnicity.demographic',
+                'age_at_diagnosis.diagnoses',
+                'pack_years_smoked.exposures',
+                'tobacco_smoking_history')
+
+
+phenotype3 <- phenotype2 %>% select(one_of(covariates))
+
+# Filling in NA's of pack years smoked
+
+phenotype3$pack_years_smoked.exposures[is.na(phenotype3$pack_years_smoked.exposures)] <- 0
+
+# Changing age at diagnosis in years
+
+phenotype3$age_at_diagnosis.diagnoses <- phenotype3$age_at_diagnosis.diagnoses/365.25
+
+rownames(phenotype3) <- phenotype2$submitter_id.samples
+phenotype3$sample_ID <- phenotype2$submitter_id.samples
+```
+
+
+# Merging the dataframes
+
+```{r}
+phenotype3$ID <- rownames(phenotype3)
+top_100_pc$ID <- rownames(top_100_pc)
+
+
+
+df_model <- phenotype3 %>% full_join(top_100_pc, by = 'ID')
+
+df_model2 <- na.omit(df_model)
+df_model2$ID <- 1:nrow(df_model2)
+```
+
+# Exploratory Data Analysis - skip
+
+```{r}
+g <- ggplot(data = df_model2) + 
+  geom_histogram(aes(x = age_at_diagnosis.diagnoses))
+```
+
+# Basic model - skip
+
+```{r}
+#making the equation
+response <- c('age_at_diagnosis.diagnoses')
+
+covariates2 <- setdiff(covariates, response)
+temp <- colnames(top_100_pc)[1:10]
+x_vars <- append(temp, covariates2)
+
+
+all_covariates <- paste(x_vars, sep = '', collapse = ' + ')
+
+eq <- paste(response, all_covariates, sep = ' ~ ')
+
+m1 <- lm(eq, data = df_model2)
+s1 <- summary(m1)
+```
+
+# Plot the fitted values vs true values - skip
+
+```{r}
+residuals <- m1$fitted.values
+
+temp_df <- data.frame(residuals, df_model2$age_at_diagnosis.diagnoses)
+colnames(temp_df) <- c('fits', 'truths')
+g2 <- ggplot() + 
+  geom_point(aes(x = truths, y = fits), data= temp_df) + 
+  geom_line(aes(x = truths, y = truths, color = 'y=x'), data= temp_df)
+```
+
+# fixing the indices of top_100_pc
+
+```{r}
+non_na_ID <- as.numeric(rownames(df_model2))
+genes_pc2 <- genes_pc[non_na_ID,]
+
+top_100_pc <- top_100_pc[non_na_ID,]
+top_100_pc <- top_100_pc %>% select(-ID)
+```
+
+# Cross validation using # of PC's as hyperparameter - skip
+
+```{r}
+set.seed(284)
+
+n <- nrow(df_model2)
+
+test_ID <- sample(rownames(df_model2), 0.2*n, replace = F)
+train_ID <- setdiff(rownames(df_model2), test_ID)
+
+
+df_test <- df_model[test_ID,]
+df_train <- df_model[train_ID,]
+
+train.control <- trainControl(method = 'cv', number = 10)
+
+m_cv <- train(formula(eq), data = df_train, method = 'lm', trControl = train.control)
+```
+
+# Get fitted values from GLS - skip
+
+```{r}
+
+gls_model <- GLS_solver(X,K,Y,n)
+betas <- gls_model[[1]]
+fitted_values <- gls_model[[4]]
+
+df_temp <- data.frame(fitted_values, Y)
+
+g <- ggplot(data = df_temp) + 
+  geom_point(aes(x = Y, y = fitted_values)) + 
+  geom_line(aes(x = Y, y = Y))
+```
+
+#creating and saving train and test df - skip
+
+```{r}
+n <- nrow(df_model2)
+
+set.seed(284)
+test_ID <- sample(rownames(df_model2), 0.2*n, replace = F)
+train_ID <- setdiff(rownames(df_model2), test_ID)
+
+
+df_test <- df_model2[test_ID,]
+df_train <- df_model2[train_ID,]
+
+save(df_test, file = "df_test_v2.RData")
+save(df_train, file = "df_train_v2.RData")
+
+#create the K matrix
+
+indices <- nrow(genes_pc2)
+K <- get_pearson_correlation_matrix(top_100_pc, indices, rownames(df_model2))
+save(K, file = 'K.RData')
+
+```
+
+# Manual Implementation of CV with GLS model
+
+```{r}
+load('df_test.RData')
+load('df_train.RData')
+load('K.RData')
+
+
+response <- c('age_at_diagnosis.diagnoses')
+
+covariates <- c('gender.demographic',
+                'race.demographic',
+                'ethnicity.demographic',
+                'age_at_diagnosis.diagnoses',
+                'pack_years_smoked.exposures',
+                'tobacco_smoking_history')
+
+pc_names <- rep('PC', 100)
+nums <- seq(1,100,1)
+pc_names2 <- paste(pc_names, nums, sep = '')
+
+
+num_PCs <- seq(1,10,1)
+M <- 50
+covariates2 <- setdiff(covariates, response)
+
+
+
+
+
+
+all_rmses <- data.frame()
+
+train_ID <- rownames(df_train)
+
+for(i in num_PCs){
+  temp <- pc_names2[1:i]
+  x_vars <- append(temp, covariates2)
+  
+  #Filter the X matrix to the features we want
+
+  X <- df_train %>% select(one_of(x_vars))
+  
+  #Converts the factors of a dataframe to 1/0 columns
+  
+  factor_covariates <- c('gender.demographic',
+                         'race.demographic',
+                         'ethnicity.demographic')
+  X <- split_factor(X, factor_covariates)
+  
+  #preparing all of the data in matrix form
+  K_train <- K[train_ID, train_ID]
+  X <- as.matrix(X)
+  Y <- as.matrix(df_train$age_at_diagnosis.diagnoses)
+  rownames(Y) <- rownames(df_train)
+  
+  n <- nrow(df_train)  
+  
+  temp_rmses <- c()
+  for(j in 1:M){
+
+    temp_rmse <- GLS_CV(df_train, K_train, X, Y, j+100)
+    temp_rmses <- append(temp_rmses, temp_rmse)
+    print(j)
+    print(temp_rmse)
+  }
+  all_rmses <- rbind(all_rmses, temp_rmses)
+  print(i)
+}
+
+rownames(all_rmses) <- num_PCs
+
+all_vals <- data.frame()
+
+for(i in 1:nrow(all_rmses)){
+  slice <- unname(all_rmses[i,])
+  slice_no_na <- slice[!is.na(slice)]
+  vals <- quantile(slice_no_na, c(0.05, 0.5, 0.95))
+  means <- mean(slice_no_na)
+  vals2 <- append(vals, means)
+  all_vals <- rbind(all_vals, vals2)
+}
+
+colnames(all_vals) <- c('low', 'med', 'high', 'mean')
+
+all_vals$PC <- num_PCs
+
+g <- ggplot(data = all_vals) + 
+  geom_point(aes(x = PC, y = mean)) + 
+  ylim(10,12) + 
+  xlab('Number of PCs') + 
+  ylab('Average RMSE') + 
+  ggtitle('Selection of Number of PCs using Cross Validation')
+
+
+
+pdf('GLS_PC_selection.pdf')
+g
+dev.off()
+
+```
+
+
+
+```{r}
+pca_summary <- summary(pca1)
+pct_var_explained <- pca_summary$sdev/sum(pca_summary$sdev)
+
+num_PCs <- 1:length(pct_var_explained)
+
+pc_df <- data.frame(pct_var_explained, num_PCs)
+pc_df2 <- pc_df[1:200,]
+g_pct_exp <- ggplot() + 
+  geom_point(data = pc_df2, aes(x = num_PCs, y = pct_var_explained)) + 
+  ylim(0, 0.027)
+
+```
+
+

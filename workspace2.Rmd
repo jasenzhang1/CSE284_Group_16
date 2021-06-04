@@ -1,0 +1,302 @@
+---
+title: "workspace2"
+author: "Jasen Zhang"
+date: "5/24/2021"
+output: pdf_document
+---
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lme4)
+library(nlme)
+library(caret)
+library(corpcor)
+library(Hmisc)
+```
+
+
+```{r}
+load('df_test_v2.RData')
+load('df_train_v2.RData')
+load('K.RData')
+
+response <- c('age_at_diagnosis.diagnoses')
+
+covariates <- c('race.demographic',
+                'ethnicity.demographic',
+                'age_at_diagnosis.diagnoses',
+                'tobacco_smoking_history')
+
+covariates <- c('gender.demographic',
+                'race.demographic',
+                'ethnicity.demographic',
+                'age_at_diagnosis.diagnoses')
+
+
+
+covariates2 <- setdiff(covariates, response)
+
+pc_names <- rep('PC', 100)
+nums <- seq(1,100,1)
+pc_names2 <- paste(pc_names, nums, sep = '')
+```
+
+#Cross validation for OLS
+
+```{r}
+#specifying PC names
+
+
+
+M <- 40
+
+
+set.seed(284)
+train.control <- trainControl(method = "cv", number = 10)
+
+RMSEs <- c()
+
+for(i in 1:20){
+  #selecting the first n PCs
+
+  selected_PCs <- pc_names2[1:i]
+  
+  covariates3 <- append(covariates2, selected_PCs)
+  
+  #preparing the equation
+  
+  eq <- paste(covariates3, collapse = ' + ')
+  eq <- paste(response, eq, sep = ' ~ ')
+  temp_RMSE <- c()
+  for(j in 1:M){
+    
+    m_OLS <- train(formula(eq), data = df_train, method = "lm",
+                 trControl = train.control)
+  
+    RMSE <- as.numeric(unname(m_OLS$results[2]))
+    temp_RMSE <- append(temp_RMSE, RMSE)
+  }
+  RMSEs <- append(RMSEs, mean(temp_RMSE))
+  print(i)
+}
+
+
+n <- 1:20
+
+df <- data.frame(n, RMSEs)
+
+g <- ggplot() + 
+  geom_point(data = df, aes(x = n, y = RMSEs)) + 
+  xlab('Number of PCs') + 
+  ylab('Average RMSE') + 
+  ggtitle('Selection of Number of PCs in OLS')
+
+pdf('OLS_CV.pdf')
+g
+dev.off()
+```
+
+# AIC for OLS
+
+```{r}
+AICs <- c()
+
+npc <- 1:50
+
+for(i in 1:50){
+  #selecting the first n PCs
+
+  selected_PCs <- pc_names2[1:i]
+  
+  covariates3 <- append(covariates2, selected_PCs)
+  
+  #preparing the equation
+  
+  eq <- paste(covariates3, collapse = ' + ')
+  eq <- paste(response, eq, sep = ' ~ ')
+
+
+    
+  m_AIC <- lm(formula(eq), data = df_train)
+  
+
+  AICs <- append(AICs, AIC(m_AIC))
+}
+
+df_aic <- data.frame(npc, AICs)
+
+g_AIC <- ggplot() + 
+  geom_point(data = df_aic, aes(x = npc, y = AICs))  +
+  xlab('Number of PCs') + 
+  ylab('AIC') + 
+  ggtitle('Using AIC to Select Number of PCs in OLS')
+
+pdf('OLS_AIC.pdf')
+g_AIC
+dev.off()
+```
+# Fit the training model on test set for OLS
+
+```{r}
+final_PC_count <- 11
+
+selected_PCs <- pc_names2[1:final_PC_count]
+
+covariates3 <- append(covariates2, selected_PCs)
+
+eq <- paste(covariates3, collapse = ' + ')
+eq <- paste(response, eq, sep = ' ~ ')
+
+m_nothing <- lm(age_at_diagnosis.diagnoses ~ 1, data = df_train)
+s_nothing <- summary(m_nothing)
+var_nothing <- s_nothing$sigma^2
+
+m_ols <- lm(formula(eq), data = df_train)
+s_ols <- summary(m_ols)
+var_ols <- s_ols$sigma^2
+
+y_hat_test <- predict(m_ols, df_test)
+y_test <- df_test$age_at_diagnosis.diagnoses
+
+
+
+ols_test_df <- data.frame(y_hat_test, y_test)
+ols_test_df <- ols_test_df %>% mutate(y_test_mean = mean(y_test)) %>%
+  mutate(PC1 = df_test$PC1)
+
+g_ols_test <- ggplot() + 
+  geom_point(data = ols_test_df, aes(x = y_test, y = y_hat_test)) + 
+  geom_line(data = ols_test_df, aes(x = y_test, y = y_test))
+
+g_nothing <- ggplot(data = ols_test_df) + 
+  geom_point(aes(x = PC1, y = y_test)) + 
+  geom_line(aes(x = PC1, y = y_test_mean)) +
+  ylab('Age at Onset (yrs)') + 
+  ggtitle('Uninformative Model') + 
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=20),
+        title=element_text(size=20))
+
+pdf('Uninformative_model.pdf')
+g_nothing
+dev.off()
+
+## create the graph for OLS
+
+ols_betas <- m_ols$coefficients
+ols_betas_no_pc1 <- ols_betas[-c(8)]
+temp_betas <- c(1,0,0,0,1,1,0,mean(df_test$PC2),
+                mean(df_test$PC3),
+                mean(df_test$PC4),
+                mean(df_test$PC5),
+                mean(df_test$PC6),
+                mean(df_test$PC7),
+                mean(df_test$PC8),
+                mean(df_test$PC9),
+                mean(df_test$PC10),
+                mean(df_test$PC11))
+
+estimate <- sum(ols_betas_no_pc1 * temp_betas)
+
+fitted_line <- estimate + ols_betas[8] * df_test$PC1
+
+ols_test_df$ols_fitted_line <- fitted_line
+
+g_ols_PC1 <- ggplot(data = ols_test_df) + 
+  geom_point(aes(x = PC1, y = y_test)) + 
+  geom_line(aes(x = PC1, y = ols_fitted_line)) + 
+  ylab('Age at Onset (yrs)') + 
+  ggtitle('OLS Model') +
+  theme(axis.text=element_text(size=20),
+      axis.title=element_text(size=20),
+      title=element_text(size=20))
+
+pdf('OLS_model.pdf')
+g_ols_PC1
+dev.off()
+```
+
+# LMM
+
+```{r}
+lmm_model1 = lme(fixed = formula(eq), random = ~ 1|tobacco_smoking_history,
+                 method = "REML", data=df_train)
+
+s_lmm_1 <- summary(lmm_model1)
+
+lmm_variance_1 <- (s_lmm_1$sigma)^2
+
+lmm_model2 = lme(fixed = formula(eq), random = ~ PC1|tobacco_smoking_history,
+                 method = "REML", data=df_train)
+
+s_lmm_2 <- summary(lmm_model2)
+
+lmm_variance_2 <- (s_lmm_2$sigma)^2
+
+lmm_betas <- s_lmm_2$coefficients$fixed
+
+lmm_b <- s_lmm_2$coefficients$random$tobacco_smoking_history
+
+
+df_test2 <- df_test %>% filter(tobacco_smoking_history != 5)
+
+lmm_betas_no_pc1 <- lmm_betas[-c(8)]
+temp_betas <- c(1,0,0,0,1,1,0,mean(df_test$PC2),
+                mean(df_test$PC3),
+                mean(df_test$PC4),
+                mean(df_test$PC5),
+                mean(df_test$PC6),
+                mean(df_test$PC7),
+                mean(df_test$PC8),
+                mean(df_test$PC9),
+                mean(df_test$PC10),
+                mean(df_test$PC11))
+
+fixed_estimate <- sum(lmm_betas_no_pc1 * temp_betas)
+
+tobacco <- df_test2$tobacco_smoking_history
+PC1 <- df_test2$PC1
+
+random_estimate <- c()
+
+for(i in 1:length(tobacco)){
+  tobacco_index <- tobacco[i]
+  temp <- lmm_b[tobacco_index,]
+  
+  b <- c(1, PC1[i])
+  random_part <- sum(temp * b)
+  random_estimate <- append(random_estimate, random_part)
+}
+
+lmm_estimate <- fixed_estimate + random_estimate
+
+df_lmm_estimate <- data.frame(lmm_estimate, df_test2$PC1, df_test2$age_at_diagnosis.diagnoses, as.factor(df_test2$tobacco_smoking_history))
+
+colnames(df_lmm_estimate) <- c('y_hat', 'PC1', 'Age', 'Tobacco')
+
+g_lmm <- ggplot(data = df_lmm_estimate) + 
+  geom_point(aes(x = PC1, y = Age, group = Tobacco, color = Tobacco)) + 
+  geom_line(aes(x = PC1, y = y_hat, group = Tobacco, color = Tobacco)) + 
+  ylab('Age at Onset (yrs)') + 
+  ggtitle('LMM Model') + 
+  theme(
+  legend.position = c(.9, .1),
+  legend.justification = c("right", "bottom"),
+  legend.box.just = "right",
+  legend.margin = margin(6, 6, 6, 6)
+  ) + 
+  theme(axis.text=element_text(size=20),
+    axis.title=element_text(size=20),
+    title=element_text(size=20),
+    legend.text=element_text(size=20))
+
+png('LMM_model.png', height = 1000, width = 1000)
+g_lmm
+dev.off()
+
+```
+
+```{r}
+PC1_group <- (df_train$PC1 < median(df_train$PC1))
+df_train$PC1_group <- PC1_group
+```

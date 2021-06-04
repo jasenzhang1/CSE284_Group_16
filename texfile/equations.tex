@@ -1,0 +1,31 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage[margin=0.5in]{geometry}
+\begin{document}
+
+\begin{align*}
+Y &= X \beta + \varepsilon\\
+\varepsilon &\sim \mathcal{N}\left(0, I\sigma^2_{\varepsilon} \right)
+\end{align*}
+
+
+\begin{align*}
+Y &= X \beta + \varepsilon\\
+\varepsilon &\sim \mathcal{N}_n(0, \sigma^2_g K)
+\end{align*}
+
+\begin{align*}
+Y &= X \beta + W u + \varepsilon\\
+Y &= X \beta + g + \varepsilon\\
+u & \sim \mathcal{N}\left(0, I\sigma_u^2\right)\\
+g &\sim \mathcal{N}\left(0, A \sigma_g^2\right)\\
+\varepsilon & \sim \mathcal{N}\left(0, I \sigma_{\varepsilon}^2\right)\\
+Var(Y) &= Var(X \beta + Wu + \varepsilon)\\
+&=  WW' \sigma_u^2 + I \sigma_{\varepsilon}^2\\
+&= A \sigma_{g}^2 + I \sigma_{\varepsilon}^2
+\end{align*}
+
+\end{document}
