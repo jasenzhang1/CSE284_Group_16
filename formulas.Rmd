@@ -1,0 +1,33 @@
+---
+title: "Untitled"
+author: "Ryo Mayes"
+date: "May 25, 2021"
+output: pdf_document
+header-includes:
+  - \usepackage{xcolor}
+  - \usepackage{sectsty} \sectionfont{\color{cyan}}
+---
+
+
+\section{a) Null (uninformative) Model}
+
+\begin{align*}
+\texttt{Age at Diagnosis} \sim 1
+\end{align*}
+
+
+\section{b) OLS Model}
+
+\begin{align*}
+\texttt{Age at Diagnosis} \sim \beta_0 &+ \beta_1 \cdot \texttt{Gender} + \beta_2 \cdot \texttt{Race} + \beta_3 \cdot \texttt{Ethnicity}\\
+&+ \beta_4 \cdot \texttt{PC1} + \beta_5 \cdot \texttt{PC2} + \cdots + \beta_{14} \texttt{PC11}
+\end{align*}
+
+\section{c) Linear Mixed Model (j = tobacco smoking score index, 1-4)}
+
+\begin{align*}
+\texttt{Age at Diagnosis}_{ij} \sim (\beta_0 + u_{0j}) &+ \beta_1 \cdot \texttt{Gender} + \beta_2 \cdot \texttt{Race} + \beta_3 \cdot \texttt{Ethnicity}\\
+&+ (\beta_4 + u_{1j}) \cdot \texttt{PC1} +  (\beta_5 + u_{2j}) \cdot \texttt{PC2} + \cdots +  (\beta_{14} + u_{11j}) \cdot \texttt{PC11}
+\end{align*}
+
+
