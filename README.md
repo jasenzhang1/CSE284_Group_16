@@ -31,3 +31,9 @@ Reads in the raw downloaded files and prepares df_train and df_test RData files 
 - workspace2
 Reads in the df_test and df_train RData files and generates models and figures.
 
+- ryo_analysis
+Explores data and methods of specifying random effects in LMMs. Compares LMMs with differing covariates and error terms. Generates Manhattan plots for protein-coding genes.
+
+- formulas
+Formats Null, OLS, and LMM formulas for slides and report.
+
