@@ -1,5 +1,4 @@
 # CSE284_Group_16
-CSE 284 Group 16 Project
 
 TCGA Website Link: https://xenabrowser.net/datapages/?cohort=GDC%20TCGA%20Lung%20Squamous%20Cell%20Carcinoma%20(LUSC)&removeHub=https%3A%2F%2Fxena.treehouse.gi.ucsc.edu%3A443 
 
@@ -18,10 +17,10 @@ https://xenabrowser.net/datapages/?dataset=TCGA-LUSC.survival.tsv&host=https%3A%
 Data dictionary: https://docs.gdc.cancer.gov/Data_Dictionary/viewer 
 
 From the TCGA websites, download:
-- TCGA-LUSC.GDC_phenotype (2).tsv
-- TCGA-LUSC.htseq_counts (2).tsv
+- TCGA-LUSC.GDC_phenotype.tsv
+- TCGA-LUSC.htseq_counts.tsv
 - TCGA-LUSC.survival.tsv
-
+and unzip the first two gz files.
 
 Code documentation:
 
@@ -29,7 +28,7 @@ Code documentation:
 Reads in the raw downloaded files and prepares df_train and df_test RData files as well as the annotations Excel file.
 
 - `workspace2`
-Reads in the df_test and df_train RData files and generates models and figures.
+Reads in the df_test and df_train RData files and generates uninformative, OLS, and LMM models and figures.
 
 - `ryo_analysis`
 Explores data and methods of specifying random effects in LMMs. Compares LMMs with differing covariates and error terms. Generates Manhattan plots for protein-coding genes.
